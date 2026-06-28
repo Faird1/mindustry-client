@@ -42,12 +42,4 @@ jobs:
         with:
           name: mindustry-client-android
           path: android/build/outputs/apk/**/*.apk
-          retention-days: 14      - name: Build Android APK
-        run: ./gradlew android:assembleDebug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: mindustry-client-android
-          path: android/build/outputs/apk/**/*.apk
           retention-days: 14
