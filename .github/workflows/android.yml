@@ -35,11 +35,35 @@ jobs:
         run: ./gradlew tools:pack
 
       - name: Build Android APK
-        run: ./gradlew android:assembleDebug
+        run: ./gradlew android:assembleDebug -x minifyDebugWithR8
 
-      - name: Upload APK
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: mindustry-client-android
           path: android/build/outputs/apk/**/*.apk
           retention-days: 14
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: build-${{ github.run_number }}
+          release_name: Android Build ${{ github.run_number }}
+          body: |
+            Автосборка #${{ github.run_number }}
+            Коммит: ${{ github.sha }}
+          draft: false
+          prerelease: true
+
+      - name: Upload APK to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: android/build/outputs/apk/debug/android-debug.apk
+          asset_name: mindustry-client-android.apk
+          asset_content_type: application/vnd.android.package-archive
