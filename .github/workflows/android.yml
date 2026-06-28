@@ -35,7 +35,7 @@ jobs:
         run: ./gradlew tools:pack
 
       - name: Build Android APK
-        run: ./gradlew android:assembleDebug -x minifyDebugWithR8
+        run: ./gradlew android:assembleDebug -x minifyDebugWithR8 -x shrinkDebugRes
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
