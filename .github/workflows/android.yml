@@ -1,18 +1,86 @@
-name: Debug Info
+name: Android Build
 
 on:
+  push:
+    branches: ["v8"]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  debug:
+  build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show gradle.properties
-        run: cat gradle.properties
-
-      - name: Show Arc hash and branch
+      - name: Clone Arc at correct commit
         run: |
-          grep -i "arc" gradle.properties
+          git clone https://github.com/mindustry-antigrief/Arc ../Arc
+          cd ../Arc && git checkout d199f8b78e8c1510667249ee19a4728ae390d4fc
+
+      - name: Set up JDK 20
+        uses: actions/setup-java@v4
+        with:
+          java-version: 20
+          distribution: temurin
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Pack sprites
+        run: ./gradlew tools:pack
+
+      - name: Disable minify via init script
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/disable-minify.gradle << 'EOF'
+          allprojects {
+              afterEvaluate { project ->
+                  if (project.plugins.hasPlugin('com.android.application')) {
+                      project.android.buildTypes.each { buildType ->
+                          buildType.minifyEnabled = false
+                          buildType.shrinkResources = false
+                      }
+                  }
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: |
+          ./gradlew android:assembleDebug \
+            --no-build-cache \
+            --no-configuration-cache
+
+      - name: Locate APK
+        id: find_apk
+        run: |
+          APK=$(find android/build/outputs/apk -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::APK not found"
+            find android/build/outputs -type f | sort
+            exit 1
+          fi
+          echo "apk_path=$APK" >> $GITHUB_OUTPUT
+          echo "Found: $APK ($(du -sh "$APK" | cut -f1))"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mindustry-client-debug-${{ github.run_number }}
+          path: ${{ steps.find_apk.outputs.apk_path }}
+          if-no-files-found: error
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "build-${{ github.run_number }}"
+          name: "Android build #${{ github.run_number }}"
+          files: ${{ steps.find_apk.outputs.apk_path }}
+          generate_release_notes: true
