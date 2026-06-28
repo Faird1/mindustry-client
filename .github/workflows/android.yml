@@ -16,6 +16,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Show android/build.gradle
+        run: cat android/build.gradle
+
       - name: Clone Arc (mindustry-antigrief fork)
         run: git clone https://github.com/mindustry-antigrief/Arc ../Arc
 
@@ -34,48 +37,62 @@ jobs:
       - name: Pack sprites
         run: ./gradlew tools:pack
 
+      - name: Touch timestamp
+        run: touch /tmp/build_start
+
       - name: Build Android APK
         run: |
           ./gradlew android:assembleDebug \
             -x minifyDebugWithR8 \
             -x shrinkDebugRes \
             --no-build-cache \
-            --no-configuration-cache \
-            --info 2>&1 | grep -E "(Task|apk|APK|output|packageDebug|error)" | tail -50
+            --no-configuration-cache
 
-      # Показываем output-metadata.json — в нём прописано имя APK
-      - name: Cat output-metadata.json
-        run: |
-          cat android/build/outputs/apk/debug/output-metadata.json || echo "not found"
-
-      # Явно запускаем packageDebug с --info чтобы увидеть что он реально делает
-      - name: Run packageDebug with full info
-        run: |
-          ./gradlew android:packageDebug \
-            -x minifyDebugWithR8 \
-            -x shrinkDebugRes \
-            --no-build-cache \
-            --info 2>&1 | grep -E "(output|apk|APK|write|copy|file|path)" | head -40
-
-      - name: Find any APK
+      - name: Find APK
         id: find_apk
         run: |
+          echo "=== output-metadata.json ==="
+          cat android/build/outputs/apk/debug/output-metadata.json 2>/dev/null || true
+
+          echo "=== Files newer than build start, >1MB ==="
+          find /home/runner/work -newer /tmp/build_start -size +1M -type f 2>/dev/null \
+            | grep -v "/sdk/\|/platforms/\|/emulator/\|/build-tools/\|\.ogg\|\.mp3\|\.aatls" \
+            | sort
+
+          echo "=== All *.apk anywhere ==="
+          find / -name "*.apk" 2>/dev/null | grep -v "/sdk/\|/platforms/\|/emulator/\|/build-tools/"
+
+          # Пытаемся найти APK
           APK=$(find / -name "*.apk" 2>/dev/null \
             | grep -v "/sdk/\|/platforms/\|/emulator/\|/build-tools/" \
             | head -1)
+
           if [ -n "$APK" ]; then
             echo "apk_path=$APK" >> $GITHUB_OUTPUT
-            echo "Found: $APK"
-          else
-            echo "Still not found — listing intermediates/apk* tree:"
-            find android/build/intermediates -maxdepth 3 -type d | sort
-            # Пробуем собрать вручную: zip компоненты в apk
-            echo "Attempting manual APK assembly..."
-            ls android/build/intermediates/apk/ 2>/dev/null || true
-            exit 1
+            echo "Found APK: $APK"
+            exit 0
           fi
 
-      - name: Upload APK
+          # Ищем крупный файл созданный во время сборки (APK без расширения или с нестандартным именем)
+          CANDIDATE=$(find /home/runner/work -newer /tmp/build_start -size +5M -type f 2>/dev/null \
+            | grep -v "\.ogg\|\.mp3\|\.aatls\|\.so\|\.jar\|\.class\|\.png\|\.ap_" \
+            | head -1)
+
+          if [ -n "$CANDIDATE" ]; then
+            echo "Found candidate file: $CANDIDATE"
+            file "$CANDIDATE"
+            # APK — это ZIP, проверяем
+            if unzip -t "$CANDIDATE" 2>/dev/null | grep -q "AndroidManifest"; then
+              cp "$CANDIDATE" /tmp/mindustry-client-debug.apk
+              echo "apk_path=/tmp/mindustry-client-debug.apk" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          echo "::error::APK not found. See logs above to determine custom outputDirectory."
+          exit 1
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: mindustry-client-debug-${{ github.run_number }}
