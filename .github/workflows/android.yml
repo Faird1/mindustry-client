@@ -40,44 +40,11 @@ jobs:
       - name: Build Android APK
         run: ./gradlew android:assembleDebug -x minifyDebugWithR8 -x shrinkDebugRes --no-build-cache
 
-      - name: Find APK
-        id: find_apk
+      - name: Find APK location
         run: |
-          echo "=== outputs ==="
-          find android/build/outputs -type f 2>/dev/null
-          echo "=== intermediates APKs ==="
-          find android/build/intermediates -name "*.apk" 2>/dev/null
-          APK=$(find android/build -name "*.apk" 2>/dev/null | head -1)
-          echo "path=$APK" >> $GITHUB_OUTPUT
-          echo "Found: $APK"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mindustry-client-android
-          path: ${{ steps.find_apk.outputs.path }}
-          retention-days: 14
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: build-${{ github.run_number }}
-          release_name: Android Build ${{ github.run_number }}
-          body: |
-            Автосборка #${{ github.run_number }}
-            Коммит: ${{ github.sha }}
-          draft: false
-          prerelease: true
-
-      - name: Upload APK to Release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.find_apk.outputs.path }}
-          asset_name: mindustry-client-android.apk
-          asset_content_type: application/vnd.android.package-archive
+          echo "=== android/build tree ==="
+          find android/build -type f 2>/dev/null | sort
+          echo "=== deploy dirs ==="
+          find . -maxdepth 4 -name "deploy" -type d 2>/dev/null
+          echo "=== all APKs on system ==="
+          find /home/runner/work -name "*.apk" 2>/dev/null | head -20
