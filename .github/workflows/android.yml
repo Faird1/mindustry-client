@@ -2,7 +2,7 @@ name: Android Build
 
 on:
   push:
-    branches: [ "v8" ]
+    branches: ["v8"]
   workflow_dispatch:
 
 permissions:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Commit
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Clone Arc (mindustry-antigrief fork)
@@ -25,9 +25,8 @@ jobs:
           java-version: 20
           distribution: temurin
 
-      - name: Setup Gradle Caching
-        uses: gradle/actions/setup-gradle@v4
-
+      # НЕ используем gradle/actions/setup-gradle — он восстанавливает Build Cache
+      # что приводит к materialisation bug с кастомным outputDirectory
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
@@ -38,13 +37,71 @@ jobs:
         run: ./gradlew tools:pack
 
       - name: Build Android APK
-        run: ./gradlew android:assembleDebug -x minifyDebugWithR8 -x shrinkDebugRes --no-build-cache
-
-      - name: Find APK location
         run: |
-          echo "=== android/build tree ==="
+          ./gradlew android:assembleDebug \
+            -x minifyDebugWithR8 \
+            -x shrinkDebugRes \
+            --no-build-cache \
+            --no-configuration-cache
+
+      # Читаем redirect.txt — он содержит реальный путь APK
+      - name: Read APK redirect
+        run: |
+          REDIRECT="android/build/intermediates/apk_ide_redirect_file/debug/redirect.txt"
+          if [ -f "$REDIRECT" ]; then
+            echo "=== redirect.txt contents ==="
+            cat "$REDIRECT"
+          else
+            echo "redirect.txt not found"
+          fi
+
+      - name: Find APK
+        id: find_apk
+        run: |
+          # 1. Пробуем через redirect.txt
+          REDIRECT="android/build/intermediates/apk_ide_redirect_file/debug/redirect.txt"
+          if [ -f "$REDIRECT" ]; then
+            # redirect.txt содержит относительный путь от директории android/build/
+            REL=$(cat "$REDIRECT" | tr -d '[:space:]')
+            RESOLVED="android/build/$REL"
+            if [ -f "$RESOLVED" ]; then
+              echo "APK found via redirect: $RESOLVED"
+              echo "apk_path=$RESOLVED" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          # 2. Стандартный путь AGP
+          STD="android/build/outputs/apk/debug/android-debug.apk"
+          if [ -f "$STD" ]; then
+            echo "APK found at standard path: $STD"
+            echo "apk_path=$STD" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 3. Широкий поиск по всей файловой системе runner
+          APK=$(find / -name "*.apk" 2>/dev/null | grep -v "sdk\|platforms\|emulator\|build-tools" | head -1)
+          if [ -n "$APK" ]; then
+            echo "APK found via global find: $APK"
+            echo "apk_path=$APK" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "::error::APK not found anywhere. Dumping tree:"
           find android/build -type f 2>/dev/null | sort
-          echo "=== deploy dirs ==="
-          find . -maxdepth 4 -name "deploy" -type d 2>/dev/null
-          echo "=== all APKs on system ==="
-          find /home/runner/work -name "*.apk" 2>/dev/null | head -20
+          exit 1
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mindustry-client-debug-${{ github.run_number }}
+          path: ${{ steps.find_apk.outputs.apk_path }}
+          if-no-files-found: error
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "build-${{ github.run_number }}"
+          name: "Android build #${{ github.run_number }}"
+          files: ${{ steps.find_apk.outputs.apk_path }}
+          generate_release_notes: true
