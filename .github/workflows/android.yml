@@ -40,6 +40,9 @@ jobs:
       - name: Build Android APK
         run: ./gradlew android:assembleDebug -x minifyDebugWithR8 -x shrinkDebugRes
 
+      - name: Rerun packageDebug to materialize APK from cache
+        run: ./gradlew android:packageDebug -x minifyDebugWithR8 -x shrinkDebugRes --rerun-tasks
+
       - name: Find APK
         id: find_apk
         run: |
