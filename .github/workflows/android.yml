@@ -16,9 +16,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show android/build.gradle
-        run: cat android/build.gradle
-
       - name: Clone Arc (mindustry-antigrief fork)
         run: git clone https://github.com/mindustry-antigrief/Arc ../Arc
 
@@ -37,60 +34,39 @@ jobs:
       - name: Pack sprites
         run: ./gradlew tools:pack
 
-      - name: Touch timestamp
-        run: touch /tmp/build_start
-
-      - name: Build Android APK
+      - name: Build debug APK (minify отключён через init script)
         run: |
+          # Создаём init-скрипт который перекрывает minifyEnabled/shrinkResources
+          # уже после того как build.gradle их выставил в true
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/disable-minify.gradle << 'EOF'
+          allprojects {
+              afterEvaluate { project ->
+                  if (project.plugins.hasPlugin('com.android.application')) {
+                      project.android.buildTypes.each { buildType ->
+                          buildType.minifyEnabled = false
+                          buildType.shrinkResources = false
+                      }
+                  }
+              }
+          }
+          EOF
+
           ./gradlew android:assembleDebug \
-            -x minifyDebugWithR8 \
-            -x shrinkDebugRes \
             --no-build-cache \
             --no-configuration-cache
 
-      - name: Find APK
+      - name: Locate APK
         id: find_apk
         run: |
-          echo "=== output-metadata.json ==="
-          cat android/build/outputs/apk/debug/output-metadata.json 2>/dev/null || true
-
-          echo "=== Files newer than build start, >1MB ==="
-          find /home/runner/work -newer /tmp/build_start -size +1M -type f 2>/dev/null \
-            | grep -v "/sdk/\|/platforms/\|/emulator/\|/build-tools/\|\.ogg\|\.mp3\|\.aatls" \
-            | sort
-
-          echo "=== All *.apk anywhere ==="
-          find / -name "*.apk" 2>/dev/null | grep -v "/sdk/\|/platforms/\|/emulator/\|/build-tools/"
-
-          # Пытаемся найти APK
-          APK=$(find / -name "*.apk" 2>/dev/null \
-            | grep -v "/sdk/\|/platforms/\|/emulator/\|/build-tools/" \
-            | head -1)
-
-          if [ -n "$APK" ]; then
-            echo "apk_path=$APK" >> $GITHUB_OUTPUT
-            echo "Found APK: $APK"
-            exit 0
+          APK=$(find android/build/outputs/apk -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::APK not found"
+            find android/build/outputs -type f | sort
+            exit 1
           fi
-
-          # Ищем крупный файл созданный во время сборки (APK без расширения или с нестандартным именем)
-          CANDIDATE=$(find /home/runner/work -newer /tmp/build_start -size +5M -type f 2>/dev/null \
-            | grep -v "\.ogg\|\.mp3\|\.aatls\|\.so\|\.jar\|\.class\|\.png\|\.ap_" \
-            | head -1)
-
-          if [ -n "$CANDIDATE" ]; then
-            echo "Found candidate file: $CANDIDATE"
-            file "$CANDIDATE"
-            # APK — это ZIP, проверяем
-            if unzip -t "$CANDIDATE" 2>/dev/null | grep -q "AndroidManifest"; then
-              cp "$CANDIDATE" /tmp/mindustry-client-debug.apk
-              echo "apk_path=/tmp/mindustry-client-debug.apk" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-          fi
-
-          echo "::error::APK not found. See logs above to determine custom outputDirectory."
-          exit 1
+          echo "apk_path=$APK" >> $GITHUB_OUTPUT
+          echo "Found: $APK ($(du -sh "$APK" | cut -f1))"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
