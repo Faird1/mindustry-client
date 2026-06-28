@@ -25,8 +25,6 @@ jobs:
           java-version: 20
           distribution: temurin
 
-      # НЕ используем gradle/actions/setup-gradle — он восстанавливает Build Cache
-      # что приводит к materialisation bug с кастомным outputDirectory
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
@@ -42,56 +40,42 @@ jobs:
             -x minifyDebugWithR8 \
             -x shrinkDebugRes \
             --no-build-cache \
-            --no-configuration-cache
+            --no-configuration-cache \
+            --info 2>&1 | grep -E "(Task|apk|APK|output|packageDebug|error)" | tail -50
 
-      # Читаем redirect.txt — он содержит реальный путь APK
-      - name: Read APK redirect
+      # Показываем output-metadata.json — в нём прописано имя APK
+      - name: Cat output-metadata.json
         run: |
-          REDIRECT="android/build/intermediates/apk_ide_redirect_file/debug/redirect.txt"
-          if [ -f "$REDIRECT" ]; then
-            echo "=== redirect.txt contents ==="
-            cat "$REDIRECT"
-          else
-            echo "redirect.txt not found"
-          fi
+          cat android/build/outputs/apk/debug/output-metadata.json || echo "not found"
 
-      - name: Find APK
+      # Явно запускаем packageDebug с --info чтобы увидеть что он реально делает
+      - name: Run packageDebug with full info
+        run: |
+          ./gradlew android:packageDebug \
+            -x minifyDebugWithR8 \
+            -x shrinkDebugRes \
+            --no-build-cache \
+            --info 2>&1 | grep -E "(output|apk|APK|write|copy|file|path)" | head -40
+
+      - name: Find any APK
         id: find_apk
         run: |
-          # 1. Пробуем через redirect.txt
-          REDIRECT="android/build/intermediates/apk_ide_redirect_file/debug/redirect.txt"
-          if [ -f "$REDIRECT" ]; then
-            # redirect.txt содержит относительный путь от директории android/build/
-            REL=$(cat "$REDIRECT" | tr -d '[:space:]')
-            RESOLVED="android/build/$REL"
-            if [ -f "$RESOLVED" ]; then
-              echo "APK found via redirect: $RESOLVED"
-              echo "apk_path=$RESOLVED" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-          fi
-
-          # 2. Стандартный путь AGP
-          STD="android/build/outputs/apk/debug/android-debug.apk"
-          if [ -f "$STD" ]; then
-            echo "APK found at standard path: $STD"
-            echo "apk_path=$STD" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # 3. Широкий поиск по всей файловой системе runner
-          APK=$(find / -name "*.apk" 2>/dev/null | grep -v "sdk\|platforms\|emulator\|build-tools" | head -1)
+          APK=$(find / -name "*.apk" 2>/dev/null \
+            | grep -v "/sdk/\|/platforms/\|/emulator/\|/build-tools/" \
+            | head -1)
           if [ -n "$APK" ]; then
-            echo "APK found via global find: $APK"
             echo "apk_path=$APK" >> $GITHUB_OUTPUT
-            exit 0
+            echo "Found: $APK"
+          else
+            echo "Still not found — listing intermediates/apk* tree:"
+            find android/build/intermediates -maxdepth 3 -type d | sort
+            # Пробуем собрать вручную: zip компоненты в apk
+            echo "Attempting manual APK assembly..."
+            ls android/build/intermediates/apk/ 2>/dev/null || true
+            exit 1
           fi
 
-          echo "::error::APK not found anywhere. Dumping tree:"
-          find android/build -type f 2>/dev/null | sort
-          exit 1
-
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: mindustry-client-debug-${{ github.run_number }}
