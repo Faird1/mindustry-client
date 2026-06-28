@@ -35,22 +35,19 @@ jobs:
         run: yes | sdkmanager --licenses || true
 
       - name: Pack sprites
-        run: ./gradlew tools:pack --info
+        run: ./gradlew tools:pack
 
       - name: Build Android APK
-        run: ./gradlew android:assembleDebug -x minifyDebugWithR8 -x shrinkDebugRes --no-build-cache --info
-
-      - name: List android build output
-        run: |
-          echo "=== android/build/outputs ==="
-          find android/build/outputs -type f 2>/dev/null || echo "outputs dir missing"
-          echo "=== all APKs anywhere ==="
-          find . -name "*.apk" 2>/dev/null || echo "no apk found"
+        run: ./gradlew android:assembleDebug -x minifyDebugWithR8 -x shrinkDebugRes --no-build-cache
 
       - name: Find APK
         id: find_apk
         run: |
-          APK=$(find . -name "*.apk" 2>/dev/null | head -1)
+          echo "=== outputs ==="
+          find android/build/outputs -type f 2>/dev/null
+          echo "=== intermediates APKs ==="
+          find android/build/intermediates -name "*.apk" 2>/dev/null
+          APK=$(find android/build -name "*.apk" 2>/dev/null | head -1)
           echo "path=$APK" >> $GITHUB_OUTPUT
           echo "Found: $APK"
 
